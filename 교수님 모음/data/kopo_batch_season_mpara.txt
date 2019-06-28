@@ -1,0 +1,7 @@
+PARAM_NAME;PARAM_VALUE
+productgroupList;PRODUCT01,PRODUCT02,PRODUCT03
+myorder;17
+myIter;3
+resultTableName;SEASON_RESULT
+jobid;batch_s
+prefix;kopo

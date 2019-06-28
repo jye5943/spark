@@ -1,0 +1,90 @@
+// 데이터 파일 로딩
+    // 파일명 설정 및 파일 읽기 (2)
+    // 기본 데이터 불러오기
+    var rawFile = "kopo_product_volume.csv"
+
+    // 절대경로 입력
+    var rawData=
+      spark.read.format("csv").
+        option("header","true").
+        option("Delimiter",",").
+        load("c:/spark/bin/data/"+rawFile)
+
+    // 파라미터 데이터 불러오기
+    /// 데이터 파일 로딩
+    // 접속정보 설정 (1)
+    var staticUrl = "jdbc:oracle:thin:@192.168.110.112:1521/orcl"
+    var staticUser = "kopo"
+    var staticPw = "kopo"
+    var selloutDb = "hk_parameter"
+
+    // 관계형 데이터베이스 Oracle 연결 (2)
+    val paramFromOracle= spark.read.format("jdbc").
+      option("url",staticUrl).
+      option("dbtable",selloutDb).
+      option("user",staticUser).
+      option("password",staticPw).load
+    // 데이터프레임 -> RDD
+    var paramRdd = paramFromOracle.rdd
+
+    // 파라미터 테이블 인덱스컬럼생성
+    var paramDataColumns = paramFromOracle.columns
+    var paramctNo = paramDataColumns.indexOf("PARAM_CATEGORY")
+    var paramnmNo = paramDataColumns.indexOf("PARAM_NAME")
+    var paramvalueNo = paramDataColumns.indexOf("PARAM_VALUE")
+
+    var testRdd = paramRdd.
+      groupBy(x=>{ (x.getString(paramctNo),  // category
+                    x.getString(paramnmNo))}).  // parameter_name
+      map(x=> {
+        // key 값 저장
+        var key = x._1
+        // data 값 저장
+        var data = x._2
+        var param_value = data.map(x=>{
+          x.getString(paramvalueNo) // parameterValue
+        }).toArray
+
+        (key, param_value)
+      })
+
+    var paramMap = testRdd.collectAsMap()
+
+    // 데이터프레임 컬럼 인덱스
+    var rawDataColumns = rawData.columns
+    var regionNo = rawDataColumns.indexOf("REGIONID")
+    var productNo = rawDataColumns.indexOf("PRODUCTGROUP")
+    var yearweekNo = rawDataColumns.indexOf("YEARWEEK")
+    var qtyNo = rawDataColumns.indexOf("VOLUME")
+
+    // productGroupList
+    var regionGroupListSplit = Array("A01","A02") // default
+
+    if ( paramMap.contains("COMMON","VALID_REGION") ) {
+      regionGroupListSplit = paramMap("COMMON","VALID_REGION")
+    }
+
+    // 지역, 상품 필터링
+    // VALID_REGION, VALID_PRODUCT
+    var REGIONSET = if(paramMap.contains("COMMON", "VALID_REGION")){
+      paramMap("COMMON", "VALID_REGION").toSet
+    }else{
+      List("ALL").toSet
+    }
+    var PRODUCTSET = if(paramMap.contains("COMMON", "VALID_PRODUCT")){
+      paramMap("COMMON", "VALID_PRODUCT").toSet
+    }else{
+      List("ALL").toSet
+    }
+
+    var filterRdd1 = rawData.filter(x => {
+      var checkValid = false
+      var productInfo = x.getString(productNo)
+      var regionInfo = x.getString(regionNo)
+      if (
+          (REGIONSET.contains(regionInfo))||
+          (PRODUCTSET.contains(productInfo))) {
+        checkValid = true
+      }
+      checkValid
+    })

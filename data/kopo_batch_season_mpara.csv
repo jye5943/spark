@@ -1,0 +1,8 @@
+PARAM_NAME;PARAM_VALUE
+productgroupList;REF,TV,MOBILE,WM,APS
+myorder;17
+myIter;3
+resultTableName;SEASON_RESULT
+ap2idList;300114,300122,300130
+jobid;batch_s
+prefix;brt

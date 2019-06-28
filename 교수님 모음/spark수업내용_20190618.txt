@@ -1,0 +1,262 @@
+package com.kopo.c1_dataLoadWrite
+
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.{Row, SQLContext}
+import edu.princeton.cs.introcs.StdStats
+
+object s12_quiz {
+  def main(args: Array[String]): Unit = {
+    val conf = new SparkConf().
+      setAppName("DataLoading").
+      setMaster("local[*]")
+    var sc = new SparkContext(conf)
+    val spark = new SQLContext(sc)
+    import spark.implicits._
+
+    var staticUrl = "jdbc:oracle:thin:@192.168.0.10:1521/XE"
+    staticUrl = "jdbc:oracle:thin:@192.168.110.111:1521/orcl"
+    var staticUser = "kopo"
+    var staticPw = "kopo"
+    var selloutDb = "kopo_channel_seasonality_new"
+
+    val selloutDataFromOracle = spark.read.format("jdbc").
+      options(Map("url" -> staticUrl, "dbtable" -> selloutDb, "user" -> staticUser, "password" -> staticPw)).load
+
+    selloutDataFromOracle.createOrReplaceTempView("keydata")
+
+    println(selloutDataFromOracle.show())
+    println("oracle ok")
+
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+    // 2. data refining
+    //////////////////////////////////////////////////////////////////////////////////////////////////
+
+    //    var mainDataSelectSql = "select regionid, regionname, ap1id, ap1name, accountid, accountname," +
+    //      "salesid, salesname, productgroup, product, item," +
+    //      "yearweek, year, week, " +
+    //      "cast(qty as double) as qty," +
+    //      "cast(target as double) as target," +
+    //      "idx from selloutTable where 1=1"
+    var rawData = spark.sql("select concat(a.regionid,'_',a.product) as keycol, " +
+      "a.regionid as accountid, " +
+      "a.product, " +
+      "a.yearweek, " +
+      "cast(a.qty as String) as qty, " +
+      "'test' as productname from keydata a" )
+
+    rawData.show(2)
+
+    var rawDataColumns = rawData.columns
+    var keyNo = rawDataColumns.indexOf("keycol")
+    var accountidNo = rawDataColumns.indexOf("accountid")
+    var productNo = rawDataColumns.indexOf("product")
+    var yearweekNo = rawDataColumns.indexOf("yearweek")
+    var qtyNo = rawDataColumns.indexOf("qty")
+    var productnameNo = rawDataColumns.indexOf("productname")
+
+    var rawRdd = rawData.rdd
+
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////  Data Filtering         ////////////////////////////////////////
+    /////////////////////////////////////////////////////////////////////////////////////////////////////
+    // The abnormal value is refined using the normal information
+    var filterRdd = rawRdd.filter(x=>{
+
+      // Data comes in line by line
+      var checkValid = true
+      // Assign yearweek information to variables
+      var week = x.getString(yearweekNo).substring(4,6).toInt
+      // Assign abnormal to variables
+      var standardWeek = 52
+
+      // filtering
+      if (week > standardWeek)
+      {
+        checkValid = false
+      }
+      checkValid
+    })
+
+    // key, account, product, yearweek, qty, productname
+    var mapRdd = filterRdd.map(x=>{
+      var qty = x.getString(qtyNo).toDouble
+      var maxValue = 700000
+      if(qty > 700000){qty = 700000}
+      Row( x.getString(keyNo),
+        x.getString(accountidNo),
+        x.getString(productNo),
+        x.getString(yearweekNo),
+        qty, //x.getString(qtyNo),
+        x.getString(productnameNo))
+    })
+
+    var flatGroupAnswer = mapRdd.groupBy(x=>{
+      ( x.getString(keyNo)  // 지역, 상품
+        )
+    }).flatMap(x=>{
+      // 코드 시작
+      var key = x._1
+      var data = x._2
+
+      // size, average, stddev
+      // Step1: Calculate size
+      var size = data.size
+
+      // Step2: Average
+      var qtyList = data.map(x=>{x.getDouble(qtyNo)})
+      var qtyArray = qtyList.toArray
+      var qtySum = qtyArray.sum
+      var qtyMean = if(size!=0){
+        qtySum/size
+      }else{
+        0.0
+      }
+
+      // Step3: 표준편차
+      // 각 데이터 - 평균
+      var stdev = if(size!=0) {
+        Math.sqrt(
+          qtyList.map(x => {
+            Math.pow(x - qtyMean, 2)
+          }).sum / size)
+      }else{
+        0.0
+      }
+
+      //output
+      var outputData = data.map(x=>{
+        var org_qty = x.getDouble(qtyNo)
+        var seasonality = if(qtyMean!=0){
+          org_qty/qtyMean
+        }else{
+          0.0
+        }
+        (
+          x.getString(keyNo),
+          x.getString(accountidNo),
+          x.getString(productNo),
+          x.getString(yearweekNo),
+          x.getDouble(qtyNo),
+          size,
+          qtyMean,
+          stdev,
+          seasonality
+        )
+      })
+
+      outputData
+      // 코드 끝
+    })
+
+    var flatGroupAnswerMap = mapRdd.groupBy(x=>{
+      ( x.getString(keyNo)  // 지역, 상품
+        )
+    }).map(x=>{
+      // 코드 시작
+      var key = x._1
+      var data = x._2
+
+      // size, average, stddev
+      // Step1: Calculate size
+      var size = data.size
+
+      // Step2: Average
+      var qtyList = data.map(x=>{x.getDouble(qtyNo)})
+      var qtyArray = qtyList.toArray
+      var qtySum = qtyArray.sum
+      var qtyMean = if(size!=0){
+        qtySum/size
+      }else{
+        0.0
+      }
+
+      // Step3: 표준편차
+      // 각 데이터 - 평균
+      var stdev = if(size!=0) {
+        Math.sqrt(
+          qtyList.map(x => {
+            Math.pow(x - qtyMean, 2)
+          }).sum / size)
+      }else{
+        0.0
+      }
+
+      ( key,
+        (size,qtyMean,stdev)
+      )
+      // 코드 끝
+    })
+/////
+var flatGroupAnswer2 = mapRdd.groupBy(x=>{
+  ( x.getString(keyNo)  // 지역, 상품
+    )
+}).flatMap(x=>{
+  // 코드 시작
+  var key = x._1
+  var data = x._2
+
+  // size, average, stdev
+  var qtyArray = data.map(x=>{x.getDouble(qtyNo)}).toArray
+  // Step1: size
+  var qtySize = qtyArray.size
+
+  // Step2: average
+  var qtyMean = StdStats.mean(qtyArray)
+  // Step3: stdev
+  var qtyStddev = StdStats.stddev(qtyArray)
+
+  var outputData = data.map(x=>{
+    (
+      key,
+      qtySize,
+      qtyMean,
+      qtyStddev
+    )
+  })
+  outputData
+})
+
+
+
+
+    var flatGroup = mapRdd.groupBy(x=>{
+      ( x.getString(keyNo)  // 지역, 상품
+      )
+    }).flatMap(x=>{
+      // code start
+      var key = x._1
+      var data = x._2
+      var qtyArray = data.map(x=>{x.getDouble(qtyNo)}).toArray
+      var size = data.size
+      var average = StdStats.mean(qtyArray)
+      var stde = StdStats.stddev(qtyArray)
+      var outputData = data.map(x=>{
+        (
+          x.getString(keyNo),
+          x.getString(accountidNo),
+          x.getString(productNo),
+          x.getString(yearweekNo),
+          size,
+          average,
+          stde
+        )
+      })
+      outputData
+    })
+
+    var flatGroup2 = mapRdd.groupBy(x=>{
+      ( x.getString(keyNo)  // 지역
+        )
+    }).map(x=>{
+      // code start
+      var key = x._1
+      var data = x._2
+      var qtyArray = data.map(x=>{x.getDouble(qtyNo)}).toArray
+      var size = data.size
+      var average = StdStats.mean(qtyArray)
+      var stde = StdStats.stddev(qtyArray)
+
+      (key, size, average, stde)
+    })
+  }
+}

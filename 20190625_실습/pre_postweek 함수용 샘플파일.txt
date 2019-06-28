@@ -1,0 +1,27 @@
+    // Functions for week Calculation
+    import java.util.Calendar
+    import java.text.SimpleDateFormat
+    import java.util.Date
+
+    // User Defined Function 
+    // Purpose of Funtion : Calculate post week 
+    def postWeek(inputYearWeek: String, gapWeek: Int): String = {
+          val currYear = inputYearWeek.substring(0, 4).toInt
+          val currWeek = inputYearWeek.substring(4, 6).toInt
+    
+          val calendar = Calendar.getInstance();
+          calendar.setMinimalDaysInFirstWeek(4);
+          calendar.setFirstDayOfWeek(Calendar.MONDAY);
+    
+          var dateFormat = new SimpleDateFormat("yyyyMMdd");
+    
+          calendar.setTime(dateFormat.parse(currYear + "1231"));
+      
+          var maxWeek = calendar.getActualMaximum(Calendar.WEEK_OF_YEAR)
+            
+          if (maxWeek < currWeek + gapWeek) {
+                return currYear.toString() + "%02d".format((currWeek + gapWeek))
+          } else {
+                return currYear.toString() + "%02d".format((currWeek + gapWeek))
+          } // end of if
+    } // end of function

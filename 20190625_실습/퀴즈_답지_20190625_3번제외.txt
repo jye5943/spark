@@ -1,0 +1,114 @@
+import org.apache.spark.sql.SparkSession
+    import scala.collection.mutable.ArrayBuffer
+    import org.apache.spark.sql.{DataFrame, Row, SQLContext, SaveMode}
+    import org.apache.spark.sql.types.{StringType, StructField, StructType}
+
+    val conf = new SparkConf().
+      setAppName("DataLoading").
+      setMaster("local[*]")
+    var sc = new SparkContext(conf)
+    val spark = new SQLContext(sc)
+    import spark.implicits._
+
+    var staticUrl = "jdbc:oracle:thin:@192.168.0.10:1521/XE"
+    staticUrl = "jdbc:oracle:thin:@192.168.110.112:1521/orcl"
+    var staticUser = "kopo"
+    var staticPw = "kopo"
+    var promotiondb = "promotion_master"
+
+    val promotionDf = spark.read.format("jdbc").
+      options(Map("url" -> staticUrl,
+        "dbtable" -> promotiondb, "user" -> staticUser,
+        "password" -> staticPw)).load
+
+    var selloutdb = "sellout_master"
+
+    val selloutDf = spark.read.format("jdbc").
+      options(Map("url" -> staticUrl,
+        "dbtable" -> selloutdb, "user" -> staticUser,
+        "password" -> staticPw)).load
+
+
+    var promotionColumns = promotionDf.
+      columns.map(x=>{x.toLowerCase()})
+
+    // accountid, yearweek, pro_percent
+    var proaccountno =  promotionColumns.indexOf("accountid")
+    var proyearweekno =  promotionColumns.indexOf("yearweek")
+    var propercentno =  promotionColumns.indexOf("pro_percent")
+    // Step1: promotion data (거래처, 연주차) 정보로
+    // 그룹바이 한후 PROMOTION정보를 획득한다.
+    var promotionRdd = promotionDf.rdd
+    var promotionMap = promotionRdd.groupBy(x=>{
+      (x.getString(proaccountno),
+      x.getString(proyearweekno))
+    }).map(x=>{
+      var key = x._1
+      var data = x._2
+      var promotion = data.map(x=>{
+        x.get(propercentno).toString.toDouble}).toArray
+      (key, promotion(0) )
+    }).collectAsMap
+
+    // Step2: sellout data에서 (거래처, 연주차) 정보를 활용하여
+    // promotion 정보를 가져온다.
+    var selloutRdd = selloutDf.rdd
+
+    var finalResul = selloutRdd.map(x=>{
+      // regionid, accountid, yearweek, qty
+      var accountid = x.getString(1)
+      var yearweek = x.getString(2)
+      var qty = x.get(3).toString.toDouble
+      var promotion = if(promotionMap.contains(accountid, yearweek)){
+        promotionMap(accountid, yearweek)
+      }else{
+        null
+      }
+      (accountid, yearweek, qty, promotion)
+    })
+
+    var finalDf = finalResul.toDF("ACCOUNTID","YEARWEEK","QTY","PROMOTION")
+
+    // 데이터 저장 (2)
+    val prop = new java.util.Properties
+    prop.setProperty("driver", "oracle.jdbc.OracleDriver")
+    prop.setProperty("user", staticUser)
+    prop.setProperty("password", staticPw)
+    val table = "FINAL_QUIZ_1"
+    //append
+    finalDf.write.mode("overwrite").jdbc(staticUrl, table, prop)
+
+
+    // Quiz #2
+    var targetFile = "pro_actual_sales.csv"
+
+    // 절대경로 입력
+    var targetDf=
+      spark.read.format("csv").
+        option("header","true").
+        option("Delimiter",",").
+        load("c:/spark/bin/data/"+targetFile)
+
+    //pro_actual_sales.csv 파일을 참조하여
+    // 아래 컨셉의 로직을 구현하려고 한다.
+    // (데이터를 활용하여 regionseg1, productseg2,yearweek 별
+    // 판매량을 담고 있는 맵을 정의하고 함수처럼 key로 접근할 수 있는 맵함수를 생성하세요.
+
+    var targetColumns = targetDf.columns.map(x=>{x.toLowerCase()})
+    var regionseg1no = targetColumns.indexOf("regionseg1")
+    var productseg2no = targetColumns.indexOf("productseg2")
+    var yearweekno = targetColumns.indexOf("yearweek")
+    var qtyno = targetColumns.indexOf("qty")
+
+    var targetRdd = targetDf.rdd
+
+    var sumMap = targetRdd.groupBy(x=>{
+      (x.getString(regionseg1no),
+       x.getString(productseg2no),
+      x.getString(yearweekno))
+    }).map(x=>{
+       var key = x._1
+       var data = x._2
+       var sumation = data.map(x=>{x.getString(qtyno).toDouble}).sum
+      (key, sumation)
+    }).collectAsMap()

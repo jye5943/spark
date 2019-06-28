@@ -1,0 +1,8 @@
+SELECT 
+            CASE WHEN B.SUTA_TIN IS NULL THEN A.SUTA_TIN
+                 ELSE B.MATA_TIN END AS UPDATED_SUTA_TIN,
+                 NVL2(B.SUTA_TIN, B.MATA_TIN, A.SUTA_TIN) AS UP2,
+            A.*,B.* 
+    FROM join1Table A
+    LEFT JOIN join2Table B
+    ON A.SUTA_TIN = B.SUTA_TIN
